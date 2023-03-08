@@ -1,0 +1,387 @@
+=begin
+  High-Level Space Field Generator - Copyright © 12/28/2022
+  by Primary Design Co., Alex London
+  E-mail: primarydesigncompany@gmail.com
+  Mail: 2042 N Highland Ave., Los Angeles, CA 90068
+  Mobile: (612) 799-7211
+  Web: http://www.primarydesignco.com
+=end
+
+require 'sketchup.rb'
+
+$default = "O12MSC_WRGBBlxx5"
+$faces_count = nil
+
+$d_colors = [    {code: "B", name: "Blue", rgb: [0, 0, 255]},
+    {code: "Bl", name: "Black", rgb: [0, 0, 0]},
+    {code: "Br", name: "Brown", rgb: [165, 42, 42]},
+    {code: "G", name: "Green", rgb: [0, 255, 0]},
+    {code: "Gr", name: "Gray", rgb: [128, 128, 128]},
+    {code: "Lb", name: "Light Blue", rgb: [173, 216, 230]},
+    {code: "Ly", name: "Light Yellow", rgb: [255, 255, 224]},
+    {code: "O", name: "Orange", rgb: [255, 165, 0]},
+    {code: "P", name: "Purple", rgb: [128, 0, 128]},
+    {code: "Pi", name: "Pink", rgb: [255, 192, 203]},
+    {code: "R", name: "Red", rgb: [255, 0, 0]},
+    {code: "S", name: "Silver", rgb: [192, 192, 192]},
+    {code: "W", name: "White", rgb: [255, 255, 255]},
+    {code: "Y", name: "Yellow", rgb: [255, 255, 0]}
+]
+
+
+def valid_colors?(colors_string, color_list)
+  extracted_colors = colors_string.scan(/[A-Za-z]{2}|[A-Z]/)
+  extracted_colors.each do |color|
+    return false unless color_list.include?(color)
+  end
+  true
+end
+
+def midpoint(vert1, vert2)
+    midpoint = Geom::Point3d.linear_combination(0.5, vert1, 0.5, vert2)
+  return midpoint 
+end
+
+def draw_interdimensional_lines(face, pattern)
+  model = Sketchup.active_model
+  entities = model.entities
+  vertices = face.vertices
+  
+  case pattern
+  when "CC"
+    (1...vertices.size/ 2 + 1).each do |j|
+        entities.add_line(vertices[0].position, vertices[j].position)
+    end
+  when "MSC"
+    midpoints = []
+    (0...vertices.size/ 2 + 1).each do |i|
+      midpoint = midpoint(vertices[i].position, vertices[(i+1) % vertices.size].position)
+      midpoints << midpoint
+    end
+    (1...midpoints.size).each do |j|
+      entities.add_line(midpoints[0], midpoints[j])
+    end
+  when "MSCC"
+    midpoints = []
+    (0...vertices.size/ 2 + 1).each do |i|
+      midpoint = midpoint(vertices[i].position, vertices[(i+1) % vertices.size].position)
+      midpoints << midpoint
+    end
+      midpoints.each do |midpoint|
+        entities.add_line(vertices[0].position, midpoint)
+      end
+  else
+    puts "No pattern."
+  end
+end
+
+def multiplier(level, sides)
+    multiplier = 0
+    if sides.even?
+        multiplier = 2 ** (level-2)
+    else
+        multiplier = 1.808995 ** (level-2)
+    end
+    return multiplier
+end
+
+def create_face_between_vertices(vertices)
+  model = Sketchup.active_model
+  entities = model.entities
+  face = entities.add_face(vertices)
+
+  return face
+end
+
+def generate_vertices(center_point, radius, sides)
+  vertices = []
+  angle = 360.degrees / sides
+  (0...sides).each do |side|
+   if sides.even?
+        point = Geom::Point3d.new(center_point.x + radius * Math.sin(angle * side), center_point.y + radius * Math.cos(angle * side), 0)
+    else
+        point = Geom::Point3d.new(center_point.x + radius * Math.sin(angle * side - (angle/ 2)), center_point.y + radius * Math.cos(angle * side - (angle/ 2)), 0)
+    end
+       vertices << point
+   end
+   return vertices
+end
+
+
+def calculate_next_level_origin(center_point, radius, sides, level)
+  new_radius = radius * multiplier(level, sides)
+  vertices = generate_vertices(center_point, new_radius, sides)
+  origin = vertices[0]
+  if sides.odd?
+    midpoint = midpoint(vertices[0], vertices[1])
+    origin = Geom::Point3d.new(midpoint.x, midpoint.y , 0)
+  else
+    origin = Geom::Point3d.new(origin.x , origin.y , 0)
+  end
+  return origin
+end
+
+
+def generate_levels(radius, sides, levels, pattern, colors)
+  model = Sketchup.active_model
+  view = model.active_view
+  entities = model.entities
+
+  pages = model.pages
+  pages.each do |page|
+    pages.erase(page)
+  end
+  
+  center_point = Geom::Point3d.new(0, 0, 0)
+  vertices = generate_vertices(center_point, radius, sides)
+  face = model.entities.add_face(vertices)
+  
+  if pattern
+    draw_interdimensional_lines(face, pattern)
+  end
+  
+  faces = entities.grep(Sketchup::Face)
+  $faces_count = faces.count
+  puts "Faces: #{$faces_count}"
+  color_index = 0
+  if colors
+    (0...colors.length).each do
+      if colors
+        if color_index < colors.length
+          color_code = colors[color_index]
+          rgb = $d_colors.find { |c| c[:code] == color_code }[:rgb]
+          color = Sketchup::Color.new(rgb[0], rgb[1], rgb[2])
+          faces[0].material = color
+          faces[0].material.alpha = 0.01
+          color_index += 1
+        else
+          faces[0].material = Sketchup::Color.new(0, 0, 0, 0.00)
+        end
+      end
+    end
+   end
+  view.refresh
+    
+  base_poly = model.entities.add_group(faces)
+  
+  angle = 360.degrees / sides
+
+  comp = base_poly.to_component
+  
+  comps = [comp]
+  
+  (1...sides).each do |side|
+        _copy = comp.copy
+       _rotation = Geom::Transformation.rotation(center_point, Z_AXIS, angle * side)
+        _copy.transform!(_rotation)
+        comps << _copy    
+        view.refresh
+      end
+      
+  togo = []
+  entities.grep(Sketchup::Edge).each{|e|
+    faces= e.faces
+    togo << e if faces.length == 2 && faces[0].normal.parallel?(faces[1].normal)
+    togo << e if faces.length == 0
+  }
+  entities.erase_entities( togo )
+  
+  current_level = model.entities.add_group(comps)
+  first_level = current_level
+  
+  eye_point = Geom::Point3d.new(center_point.x, center_point.y, first_level.bounds.max.z + radius*2)
+  target_point = center_point
+  view_direction = target_point - eye_point
+  up_vector = view_direction.cross([-1,0,0])
+  view.camera.set(eye_point, target_point, up_vector)
+  view.refresh
+  
+  level_groups = []
+  level_groups << current_level
+
+  origin = center_point
+  (2..levels).each do |level|
+      start_time = Time.now
+      origin = calculate_next_level_origin(origin, radius, sides, level)
+      comps = []
+      (0...sides).each do |side|
+        _copy = current_level.copy
+       _rotation = Geom::Transformation.rotation(origin, Z_AXIS, angle * side)
+        _copy.transform!(_rotation)
+        comps << _copy 
+        UI.start_timer(10, false){
+          view.refresh
+        }
+      end
+      current_level = model.entities.add_group(comps)
+      level_groups << current_level
+      
+      end_time = Time.now
+      elapsed_time = end_time - start_time
+      
+      elapsed_time_formatted = ""
+      elapsed_time_formatted = "#{elapsed_time}s"
+
+      puts "Level #{level}  Time elapsed: #{elapsed_time_formatted}"
+    end
+
+    level_groups.each_with_index do |level, index|
+          if index > 0
+            previous_level = level_groups[index - 1]
+            m = 1
+            while previous_level.bounds.max.x > level.bounds.min.x 
+              transformation = Geom::Transformation.new([previous_level.bounds.max.x - level.bounds.min.x + 0.01*m, 0])
+              level.transform!(transformation)
+              m += 1
+              view.refresh
+         end
+      end
+    end
+    
+    i = 1
+    level_groups.each do |level| 
+      cp = level.bounds.center
+      eye_point = Geom::Point3d.new(cp.x, cp.y, level.bounds.max.z + radius*4)
+      target_point = cp
+      view_direction = target_point - eye_point
+      up_vector = view_direction.cross([-1,0,0])
+      view.camera.set(eye_point, target_point, up_vector)
+      view.refresh
+      new_page = pages.add("Level #{i}")
+      new_page.use_camera = view.camera
+      i += 1
+    end  
+  end
+
+def calculate_face_count(dimension_num, pattern)
+  num_faces = 0
+  case pattern
+  when "CC"
+    num_faces = dimension_num - 1
+  when "MSC"
+    num_faces = (dimension_num * (dimension_num - 1)) / 2
+  when "MSCC"
+    num_faces = (dimension_num - 1) * (dimension_num - 2) / 2
+  when "CCMSC"
+    num_faces = (dimension_num - 1) + (dimension_num * (dimension_num - 1)) / 2
+  when "CCMSCC"
+    num_faces = (dimension_num - 1) + (dimension_num - 2) * (dimension_num - 3) / 2
+  when "CCMSCMSCC"
+    num_faces = (dimension_num - 1) + (dimension_num - 2) * (dimension_num - 3) / 2 + (dimension_num * (dimension_num - 1)) / 2
+  when "MSCMSCC"
+    num_faces = (dimension_num - 1) * (dimension_num - 2) / 2 + (dimension_num * (dimension_num - 1)) / 2
+  else
+    num_faces = 1
+  end
+  return num_faces
+end
+
+def parse_parameters(input_string, colorset)
+  regex = /O([0-9]+)?([A-Z]+)?(_[A-Za-z]+)?xx([0-9]+)?/
+  match = input_string.match(regex)
+  if match.nil?
+    puts "Invalid parameter format. Please use format: O<dimension number> <pattern> _<colors> xx<level number>"
+    return
+  end
+  dimension_num = match[1].to_i
+  pattern = match[2].to_s
+  colors_string = match[3].to_s
+  colors_string = colors_string[1..-1]
+  level_num = match[4].to_i
+  if level_num == nil
+    level_num = 1
+  end
+  
+  puts "Dimension: #{dimension_num}", "Pattern: #{pattern}", "Colors: #{colors_string}", "Level: #{level_num}"
+  
+  if colors_string != nil
+    color_codes = colors_string.scan(/[A-Z][a-z]|[A-Z]/)
+    valid_colors = colorset.map { |c| c[:code] }
+    color_codes.each do |color|
+      if !valid_colors.include?(color)
+        puts "Invalid color code: #{color}"
+        return
+      else
+        puts "Valid color code: #{color}"
+      end
+     end
+  end
+  return dimension_num, pattern, color_codes, level_num
+  end
+
+def update_text_label(dimension_num, level_num)
+  if dimension_num && level_num
+    sentence = "\"Level #{level_num} of dimension #{dimension_num} (with #{$faces_count} interdimensional face(s).)\""
+  elsif dimension_num
+    sentence = "\"Level 1 of dimension #{dimension_num}.\""
+  else
+    sentence = "Invalid input"
+  end
+
+  return sentence
+end
+
+def add_thousands(string)
+  return string.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse
+end
+
+def generate_space_field(default = [$default])
+  radius = 1
+  prompts = [""]
+  input = UI.inputbox(prompts, default, "Generate Space Field")
+  # default_parsed = parse_parameters(default[0], $d_colors)
+  # sentence = update_text_label(default_parsed[0], default_parsed[1])
+  parameters = input[0].to_s
+  puts parameters
+  parsed_params = parse_parameters(parameters, $d_colors)
+  sides = parsed_params[0].to_i
+  pattern = parsed_params[1]
+  colors = parsed_params[2]
+  levels = parsed_params[3].to_i
+  
+  if sides < 3 || sides > 100
+    UI.messagebox("Number of sides must be between 3 and 100")
+    generate_space_field
+    return
+  end
+  
+  $faces_count = sides
+  puts "Faces: #{$faces_count}"
+  sentence = update_text_label(sides, levels)
+  lines = (sides + $faces_count)** levels
+  outer_gons = sides** levels
+  lines_side = lines/ sides
+  predicted_time = 0
+  if pattern != ""
+    puts "Pattern"
+    predicted_time = lines/ 600_000 * levels
+  else
+    puts "W/o pattern"
+    predicted_time = lines/ 1_300_000 * levels
+  end
+  if predicted_time > 60
+    minutes, seconds_remainder = predicted_time.divmod(60)
+    message = sprintf(sentence + "\n\nThis will result in:\n\t\tLines: #{add_thousands(lines)}\n\t\tOuter-gons: #{add_thousands(outer_gons)}\n\t\tLines/side: #{add_thousands(lines_side)}\n\nEst. wait: %d min and %d sec \(#{predicted_time}\ sec)\nWould you like to continue?", minutes, seconds_remainder)
+  else
+   message = sprintf(sentence + "\n\nThis will result in:\n\t\tLines: #{add_thousands(lines)}\n\t\tOuter-gons: #{add_thousands(outer_gons)}\n\t\tLines/side: #{add_thousands(lines_side)}\n\nEst. wait: %d sec.\nWould you like to continue?", predicted_time)
+  end
+  puts format(message)
+  response = UI.messagebox(message, MB_OKCANCEL)
+  if response == IDOK
+    _filename = nil
+    if levels > 1
+      _filename = "#{input[0]}.skp"
+    else
+      _filename = "#{input[0]}.skp"
+    end
+    puts _filename
+    generate_levels(radius, sides, levels, pattern, colors)
+    
+    model = Sketchup.active_model
+    model.save _filename
+  else
+    generate_space_field(input)
+  end
+end
+
+UI.menu("Plugins").add_item("Generate Space Field") {generate_space_field}
